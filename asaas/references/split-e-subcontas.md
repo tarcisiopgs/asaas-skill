@@ -90,6 +90,12 @@ Estornar a cobrança estorna o split: todas as contas que receberam têm a trans
 
 Não dá para criar ou gerenciar split pela interface web. Sem integração própria, restam integradores (Pluga, Make) ou o plugin de WooCommerce.
 
+## Duas coisas que mudam o split e moram em outro arquivo
+
+**Antecipar uma cobrança com split muda a base de cálculo do repasse** — o líquido passa a descontar também a taxa de antecipação. Em split percentual isso reduz o valor repassado sem nenhum erro aparecer. Em `antecipacao-e-garantia.md`.
+
+**A Conta Escrow retém o que a subconta recebe** até a liberação, então "cobrança recebida" deixa de significar "saldo disponível". Mesmo arquivo.
+
 ## Recuperar um `walletId` existente
 
 Se a conta não foi criada via API ou o `walletId` não foi armazenado, existe endpoint de recuperação — precisa da chave de API da conta destino. Veja `reference/recuperar-walletid.md`.
