@@ -1,6 +1,6 @@
 ---
 name: asaas
-description: Integração com a API do Asaas — gateway de pagamentos e conta digital brasileiro. Cobrir cobranças (Pix, boleto, cartão de crédito, parcelamento), assinaturas recorrentes, split de pagamento, subcontas para marketplace, webhooks e o ambiente Sandbox. Use sempre que aparecer "Asaas", `api.asaas.com`, `access_token`, `walletId`, `billingType`, `$aact_`, ou quando a tarefa envolver Pix, boleto, split de pagamento, subconta, ou marketplace brasileiro que repassa dinheiro a terceiros — mesmo que o gateway não seja nomeado. Use também para escolher entre Asaas e outro gateway para um produto no Brasil, e antes de consultar a documentação do Asaas por WebFetch ou curl.
+description: Integração com a API do Asaas — gateway de pagamentos e conta digital brasileiro. Cobrir cobranças (Pix, boleto, cartão de crédito, parcelamento), assinaturas recorrentes, Pix Automático, split de pagamento, subcontas para marketplace, antecipação de recebíveis, Conta Escrow, webhooks, limites da API e o ambiente Sandbox. Use sempre que aparecer "Asaas", `api.asaas.com`, `access_token`, `walletId`, `billingType`, `$aact_`, ou quando a tarefa envolver Pix, boleto, split de pagamento, subconta, antecipar recebível, reter valor em garantia, ou marketplace brasileiro que repassa dinheiro a terceiros — mesmo que o gateway não seja nomeado. Use também ao diagnosticar 429 ou erro de autenticação no Asaas, para escolher entre Asaas e outro gateway para um produto no Brasil, e antes de consultar a documentação do Asaas por WebFetch ou curl.
 ---
 
 # Asaas
@@ -86,6 +86,22 @@ O padrão que resolve: cada evento traz um `id` estável entre reenvios. Persist
 
 Responder `200` antes de persistir é a falha mais cara: o Asaas considera entregue e você perdeu o evento. Detalhes, exemplo de esquema e tratamento de fila pausada: `references/webhooks.md`.
 
+## Depois que o dinheiro entra
+
+Duas funcionalidades mexem em **quando** o valor fica disponível, e as duas afetam conciliação.
+
+**Antecipação** adianta o recebimento cobrando uma taxa a mais. O detalhe que quebra integração de marketplace: se a cobrança tem split, a antecipação **muda a base de cálculo do repasse**, porque o líquido passa a descontar também a taxa de antecipação. Em split fixo a antecipação é recusada quando não cabe — falha visível. Em split percentual ela prossegue e o parceiro simplesmente recebe menos do que a conta feita sobre o bruto. Ninguém é avisado.
+
+**Conta Escrow** faz o contrário: retém o que a subconta recebe até a liberação. Enquanto retido, o recebimento aconteceu mas o saldo não existe — e uma plataforma que trata "cobrança recebida" como "dinheiro disponível" diverge do extrato o tempo todo.
+
+Detalhes, regras e exemplos: `references/antecipacao-e-garantia.md`.
+
+## Três limites diferentes devolvem o mesmo 429
+
+O Asaas limita por **rate limit** (por endpoint, com headers `RateLimit-*`), por **cota** (25.000 requisições por conta a cada 12h) e por **concorrência** (até 50 `GET` simultâneos). Os três respondem `429`, então o código sozinho não diz qual estourou.
+
+Isso importa porque a reação é oposta: retry com backoff resolve o rate limit, mas em cota só queima mais do orçamento de 12h, e em concorrência adiciona mais uma requisição à fila que já transbordou. Leia os headers antes de reagir. Detalhes em `references/limites-e-erros.md`.
+
 ## Escolhendo entre Asaas e um gateway internacional
 
 Para produtos que cobram no Brasil, a comparação raramente é sobre percentual de taxa. Os fatores que costumam decidir:
@@ -106,3 +122,5 @@ Não decida por tabela de preço isolada: um gateway com taxa menor que não ent
 | `references/split-e-subcontas.md` | Marketplace, subcontas, `walletId`, estados de split |
 | `references/webhooks.md` | Receber eventos, idempotência, fila |
 | `references/ambientes-e-chaves.md` | Sandbox, chaves de API, segurança, ida para produção |
+| `references/antecipacao-e-garantia.md` | Antecipar recebíveis, Conta Escrow, e o efeito da antecipação sobre o split |
+| `references/limites-e-erros.md` | Tomou 429, precisa dimensionar carga, ou está lendo um erro da API |

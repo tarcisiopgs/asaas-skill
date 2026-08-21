@@ -1,4 +1,4 @@
-# asaas-skills
+# asaas-skill
 
 Agent skill for integrating with [Asaas](https://www.asaas.com), a Brazilian payment gateway and digital account provider. Written in Portuguese, since Asaas' own documentation and audience are Brazilian.
 
@@ -7,7 +7,7 @@ Skill para agentes de IA sobre a API do Asaas — cobranças, split de pagamento
 ## Instalação
 
 ```bash
-npx skills add tarcisiopgs/asaas-skills@asaas -g -y
+npx skills add tarcisiopgs/asaas-skill@asaas -g -y
 ```
 
 O `-g` instala globalmente (nível de usuário), disponível em todos os agentes compatíveis — Claude Code, Cursor, Codex, Gemini CLI, entre outros.
@@ -24,6 +24,9 @@ Para instalar apenas no projeto atual, remova o `-g`.
 | **Split de pagamento** | Base de cálculo no líquido, regra da própria carteira, bloqueio por divergência |
 | **Subcontas** | `walletId`, restrição regulatória sobre a chave de API, o que não é herdado da conta raiz |
 | **Webhooks** | Entrega at-least-once, idempotência por `id`, ordem de persistência e resposta |
+| **Antecipação** | Simular antes de solicitar, cartão x boleto, e o efeito da antecipação sobre o split |
+| **Conta Escrow** | Retenção por subconta, liberação automática ou manual, e o impacto na conciliação |
+| **Limites** | Os três mecanismos que devolvem 429 e por que o retry cego piora dois deles |
 | **Documentação** | Como consultar a doc oficial em Markdown, `llms.txt` e o MCP oficial |
 
 O foco é o que a documentação não deixa óbvio à primeira leitura: as convenções que divergem de gateways internacionais e os erros que não estouram — passam, e aparecem depois na fatura do cliente ou no extrato do fim do mês.
@@ -35,8 +38,10 @@ asaas/
 ├── SKILL.md
 └── references/
     ├── ambientes-e-chaves.md
+    ├── antecipacao-e-garantia.md
     ├── cobrancas.md
     ├── consultar-docs.md
+    ├── limites-e-erros.md
     ├── split-e-subcontas.md
     └── webhooks.md
 ```

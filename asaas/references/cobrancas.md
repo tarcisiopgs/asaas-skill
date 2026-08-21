@@ -43,7 +43,7 @@ O erro não estoura: a API aceita, a cobrança é criada, o cliente recebe. Deix
 
 Retorna QR Code e o código copia-e-cola na resposta da cobrança. Confirmação é quase imediata, e chega por webhook — não fique fazendo polling.
 
-Para assinatura recorrente paga em Pix, veja os fluxos de Pix Automático na doc (`docs/automatic-pix-webhook-flows.md`), que dependem de mandato autorizado pelo cliente no banco dele.
+Para cobrança recorrente em Pix existe o **Pix Automático**, que é coisa diferente de assinatura — veja a comparação no fim deste arquivo.
 
 ## Cartão de crédito
 
@@ -69,6 +69,24 @@ Recorrência gerenciada pelo Asaas: você cria a assinatura com `cycle` (`MONTHL
 Acompanhe pelos webhooks de cobrança — cada ciclo gera uma cobrança nova com seu próprio evento. A assinatura é o contrato; a cobrança é o que efetivamente é pago.
 
 Se o seu produto precisa de controle fino sobre quando e quanto cobrar (uso variável, upgrade no meio do ciclo, proporcionalidade), avalie gerar cobranças avulsas pela sua própria lógica em vez de usar assinatura.
+
+### Assinatura ou Pix Automático?
+
+Os dois fazem cobrança recorrente, mas a divisão de responsabilidade é oposta — e é isso que decide, não a preferência por Pix.
+
+| | Assinatura | Pix Automático |
+|---|---|---|
+| Meio de pagamento | boleto, Pix e cartão | só Pix |
+| Quem cria as cobranças seguintes | o Asaas, sozinho | **a sua aplicação**, chamada a chamada |
+| Autorização do pagador | não precisa | **precisa**, via QR Code inicial |
+| Débito automático | só em cartão | sim, via Pix |
+| Controle da recorrência | Asaas | sua aplicação |
+
+**Assinatura é o padrão** para mensalidade, SaaS, academia, escola, condomínio, clube — você cria uma vez e acompanha os webhooks.
+
+**Pix Automático é débito automático via Pix**, no modelo que o Banco Central estabeleceu para conta de consumo: energia, água, telefonia, internet. Ele exige que o pagador autorize um mandato no banco dele, e depois disso **cada cobrança continua sendo criada por você** (`POST /v3/pix/automatic/paymentInstructions`). Quem escolhe Pix Automático esperando o automatismo da assinatura acaba com uma recorrência que nunca cobra, porque ninguém escreveu o código que emite as instruções.
+
+Os fluxos de webhook e os motivos de recusa têm páginas próprias na doc (`docs/fluxos-de-webhook`, `docs/motivos-de-recusa`).
 
 ## Status e conciliação
 
