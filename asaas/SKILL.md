@@ -1,6 +1,6 @@
 ---
 name: asaas
-description: Integração com a API do Asaas — gateway de pagamentos e conta digital brasileiro. Cobrir cobranças (Pix, boleto, cartão de crédito, parcelamento), assinaturas recorrentes, Pix Automático, split de pagamento, subcontas para marketplace, antecipação de recebíveis, Conta Escrow, webhooks, limites da API e o ambiente Sandbox. Use sempre que aparecer "Asaas", `api.asaas.com`, `access_token`, `walletId`, `billingType`, `$aact_`, ou quando a tarefa envolver Pix, boleto, split de pagamento, subconta, antecipar recebível, reter valor em garantia, ou marketplace brasileiro que repassa dinheiro a terceiros — mesmo que o gateway não seja nomeado. Use também ao diagnosticar 429 ou erro de autenticação no Asaas, para escolher entre Asaas e outro gateway para um produto no Brasil, e antes de consultar a documentação do Asaas por WebFetch ou curl.
+description: Integração com a API do Asaas para cobranças, assinaturas, Pix Automático, split, subcontas, antecipação, Conta Escrow, webhooks e Sandbox. Use quando a tarefa mencionar explicitamente Asaas, endpoints do Asaas ou uma integração já identificada como Asaas, incluindo diagnóstico de autenticação e limites. Não ative apenas por termos genéricos como Pix, boleto, access_token ou marketplace.
 ---
 
 # Asaas
@@ -41,19 +41,11 @@ access_token: $aact_prod_000...
 
 Não é `Authorization: Bearer`. Header próprio, valor cru, sem prefixo de esquema.
 
-### 3. A chave começa com `$` — e isso quebra arquivos `.env`
+### 3. Preserve o `$` inicial da chave
 
-As chaves têm o formato `$aact_prod_...` (produção) ou `$aact_hmlg_...` (Sandbox). O `$` inicial é interpretado como expansão de variável por praticamente todo parser de `.env` e por shells, o que silenciosamente transforma a chave em string vazia — e você recebe 401 sem entender por quê.
+As chaves usam prefixos como `$aact_prod_` (produção) e `$aact_hmlg_` (Sandbox). A interpretação de `$` depende do shell, do carregador de `.env` e das camadas de configuração utilizadas. Não existe escape universal: consulte a documentação do runtime e valide a configuração com um valor fictício que contenha `$`, sem imprimir a chave real. Veja `references/ambientes-e-chaves.md`.
 
-Escape conforme o parser em uso. Aspas simples nem sempre bastam: alguns runtimes expandem `$` mesmo dentro delas. A combinação que costuma satisfazer tanto o parser da aplicação quanto o Docker Compose é aspas duplas com barra invertida:
-
-```bash
-ASAAS_API_KEY="\$aact_prod_000..."
-```
-
-Depois de mudar o `.env`, reinicie o processo — watchers de arquivo geralmente não recarregam variáveis de ambiente.
-
-**O prefixo também revela o ambiente.** `$aact_hmlg_` é Sandbox e `$aact_prod_` é produção. Vale uma verificação na inicialização: se o prefixo da chave não combina com a URL base configurada, aborte com uma mensagem clara em vez de deixar a aplicação apontar para produção com credencial de teste (ou o contrário, o que é pior — cobranças reais durante um teste).
+Confira também se a chave e a URL base pertencem ao mesmo ambiente antes de iniciar a integração.
 
 ### 4. Sandbox e produção têm hosts diferentes
 
@@ -68,9 +60,9 @@ As chaves não são intercambiáveis entre ambientes. Se encontrar código apont
 
 Split é como o Asaas resolve marketplace: a cobrança nasce em uma conta e parte do valor é creditada automaticamente em outras. Três regras concentram quase todos os bugs.
 
-**A cobrança pertence a quem prestou o serviço.** Se o vendedor é quem entrega, a cobrança é criada na conta dele e o split direciona a comissão para a plataforma. Criar tudo na conta da plataforma inverte o fluxo do dinheiro e muda quem é o responsável pela operação perante o cliente e o fisco.
+**A cobrança permanece na conta responsável pela venda ou serviço**, conforme a [documentação de split](https://docs.asaas.com/docs/split-de-pagamentos). Identifique essa conta pelo modelo da operação; não presuma que toda integração é um marketplace ou que a conta responsável será sempre uma subconta.
 
-Isso implica autenticar como a subconta — e o acesso à chave de API de subcontas tem restrição regulatória que precisa ser confirmada antes de desenhar a arquitetura. Leia `references/split-e-subcontas.md` antes de assumir que essa chave estará disponível.
+Quando a integração exigir autenticação como subconta, confirme a disponibilidade da chave antes de desenhar a arquitetura. Leia `references/split-e-subcontas.md`.
 
 **Nunca inclua a própria carteira no split.** O que sobra depois dos splits já é creditado automaticamente a quem emitiu a cobrança. Mandar o próprio `walletId` faz a API retornar exceção — não é um no-op silencioso, é um erro que derruba a criação da cobrança.
 
@@ -82,7 +74,7 @@ Estados, bloqueio por divergência e limites de casas decimais: `references/spli
 
 O Asaas entrega eventos com garantia **at-least-once**: o mesmo evento pode chegar mais de uma vez, especialmente quando seu endpoint demora a responder. Isso não é falha, é o contrato — e integrações que assumem entrega única duplicam pedidos, e-mails e liberações de acesso.
 
-O padrão que resolve: cada evento traz um `id` estável entre reenvios. Persista esse `id` com restrição de unicidade, responda `200` assim que a persistência confirmar, e processe a regra de negócio depois, de forma assíncrona. Violação de unicidade significa "já vi esse evento" — responda `200` e siga em frente.
+Antes de persistir, valide o header `asaas-access-token` contra o token configurado para o webhook; esse segredo é distinto da chave da API. O padrão de deduplicação: cada evento traz um `id` estável entre reenvios. Persista esse `id` com restrição de unicidade, responda `200` assim que a persistência confirmar, e processe a regra de negócio depois, de forma assíncrona. Use inserção atômica com unicidade para reconhecer duplicatas e mantenha o identificador após concluir o processamento. O worker também precisa impedir efeitos duplicados em retries.
 
 Responder `200` antes de persistir é a falha mais cara: o Asaas considera entregue e você perdeu o evento. Detalhes, exemplo de esquema e tratamento de fila pausada: `references/webhooks.md`.
 
@@ -102,16 +94,9 @@ O Asaas limita por **rate limit** (por endpoint, com headers `RateLimit-*`), por
 
 Isso importa porque a reação é oposta: retry com backoff resolve o rate limit, mas em cota só queima mais do orçamento de 12h, e em concorrência adiciona mais uma requisição à fila que já transbordou. Leia os headers antes de reagir. Detalhes em `references/limites-e-erros.md`.
 
-## Escolhendo entre Asaas e um gateway internacional
+## Comparação com outros provedores
 
-Para produtos que cobram no Brasil, a comparação raramente é sobre percentual de taxa. Os fatores que costumam decidir:
-
-- **Pix** é obrigatório na prática no varejo brasileiro. Confirme se o concorrente oferece Pix para contas brasileiras sem lista de espera, e se cobre Pix recorrente.
-- **Parcelamento no cartão** é expectativa de mercado em ticket alto. Nem todo gateway internacional oferece parcelamento no Brasil.
-- **Marketplace com repasse a terceiros** exige subcontas com KYC e split. Verifique se o concorrente permite onboarding self-service dos recebedores, ou se cada um precisa de aprovação individual.
-- **Boleto e NF-e** existem no Asaas nativamente e costumam ser produto separado (ou inexistente) fora do Brasil.
-
-Não decida por tabela de preço isolada: um gateway com taxa menor que não entrega Pix ou parcelamento não é mais barato, é inviável. Confirme cada ponto na documentação vigente dos dois lados antes de recomendar — disponibilidade regional muda com frequência.
+Quando a tarefa pedir uma comparação, parta dos requisitos informados: meios de pagamento, parcelamento, recorrência, repasses, disponibilidade regional e custos. Não presuma que Pix, marketplace ou faturamento recorrente são necessários para todo produto. Confirme recursos e restrições na documentação vigente de cada provedor.
 
 ## Referências
 

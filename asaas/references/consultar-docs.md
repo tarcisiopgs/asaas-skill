@@ -39,7 +39,7 @@ O Asaas mantém um servidor MCP público que expõe a especificação OpenAPI de
 https://docs.asaas.com/mcp
 ```
 
-Configuração típica:
+O formato de configuração depende do cliente MCP. Exemplo para clientes que aceitam `mcpServers` (não é uma configuração universal para Codex e Claude Code):
 
 ```json
 {

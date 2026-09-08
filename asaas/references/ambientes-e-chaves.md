@@ -39,19 +39,16 @@ if (isProd !== keyIsProd) {
 }
 ```
 
-## O `$` inicial quebra arquivos `.env`
+## Preserve a chave conforme o runtime
 
-O cifrão é sintaxe de expansão de variável em shells e na maioria dos parsers de `.env`. O resultado é uma chave vazia e um 401 sem explicação aparente.
+A expansão de `$` depende de quem lê a configuração. Shell, carregador de `.env`, interpolação do Docker Compose e gerenciador de segredos podem aplicar regras diferentes. Não copie uma receita de escape entre eles.
 
-Aspas simples não resolvem em todo runtime — alguns expandem `$` mesmo dentro delas. A forma que costuma satisfazer tanto o parser da aplicação quanto o Docker Compose (que lê o mesmo `.env` para interpolar) é aspas duplas com barra:
+- Identifique todas as camadas que carregam a variável e consulte a documentação de cada uma.
+- Teste o caminho completo com um valor fictício contendo `$`; um escape incorreto também pode introduzir uma barra literal.
+- Valide a presença e o prefixo esperado no processo, sem imprimir a chave real, partes dela ou headers de autenticação.
+- Recarregue a configuração conforme o runtime; editar o arquivo não garante que o processo receba o novo valor.
 
-```bash
-ASAAS_API_KEY="\$aact_prod_000..."
-```
-
-Depois de editar, reinicie o processo — watchers de arquivo raramente recarregam variáveis de ambiente.
-
-Sintoma típico de escape errado: a aplicação sobe normalmente, todas as chamadas retornam 401, e a chave impressa em log aparece truncada ou vazia.
+Referências de configuração: [Node.js `.env`](https://nodejs.org/api/environment_variables.html#dotenv) e [interpolação no Docker Compose](https://docs.docker.com/compose/how-tos/environment-variables/variable-interpolation/). Use a documentação da ferramenta efetivamente utilizada pelo projeto.
 
 ## Gestão de chaves
 

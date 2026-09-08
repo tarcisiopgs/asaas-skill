@@ -37,7 +37,7 @@ O erro não estoura: a API aceita, a cobrança é criada, o cliente recebe. Deix
 | `DEBIT_CARD` | Cartão de débito |
 | `UNDEFINED` | O cliente escolhe na tela de pagamento |
 
-`UNDEFINED` costuma ser a melhor escolha quando você entrega a fatura hospedada e não quer decidir pelo cliente — a conversão tende a ser melhor do que forçar um meio.
+`UNDEFINED` permite oferecer a escolha na fatura hospedada. Escolha o meio conforme os requisitos do produto; não presuma um efeito sobre conversão sem evidência.
 
 ## Pix
 
