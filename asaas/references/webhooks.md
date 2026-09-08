@@ -1,72 +1,80 @@
 # Webhooks
 
-## O contrato: at-least-once
+## Recepção e deduplicação
 
-O Asaas garante que o evento chega **ao menos uma vez**. O mesmo evento pode chegar repetido — tipicamente quando seu endpoint não responde a tempo e o Asaas assume falha na entrega.
+O Asaas utiliza entrega **at-least-once**: eventos podem se repetir com o mesmo `id`. Não dependa de entrega única.
 
-Isso não é defeito, é o contrato. Integrações que assumem entrega única acabam duplicando pedidos, e-mails, liberação de acesso e crédito de saldo.
+1. Valide `asaas-access-token` contra o `authToken` configurado para este webhook, antes de persistir. Use um segredo próprio, nunca a API key do Asaas.
+2. Valide o payload e insira `id` + payload atomicamente com unicidade e status `PENDING`.
+3. Confirme a persistência e então responda `200`, inclusive para duplicatas já persistidas.
+4. Processe em worker e marque `DONE`. Preserve o identificador para impedir reprocessamento em reenvios futuros; remover o payload por política de retenção não deve apagar essa proteção.
 
-Os eventos chegam por `POST`, que é o único verbo HTTP sem idempotência natural — daí a responsabilidade ficar do lado de quem recebe.
-
-## O padrão que resolve
-
-Cada evento traz um `id` que permanece o mesmo entre reenvios. Use-o como chave de unicidade.
-
-1. Recebeu o evento → persiste `id` + payload com restrição `UNIQUE`, status `PENDING`
-2. Persistiu → responde `200` imediatamente
-3. Processa a regra de negócio depois, de forma assíncrona
-4. Terminou → marca `DONE` (ou remove o registro)
-
-Violação de unicidade significa "já vi este evento": responda `200` e não processe de novo.
+Exemplo ilustrativo para uma integração/conta, em PostgreSQL e Express. Pressupõe `app`, um pool `db` sem transação aberta (autocommit) e configuração de segredo carregada pelo runtime. Se compartilhar armazenamento entre contas/ambientes, inclua esse escopo, determinado pela configuração autenticada do endpoint, na chave de unicidade.
 
 ```sql
 CREATE TABLE asaas_events (
-    id              bigint PRIMARY KEY,
+    id              bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     asaas_event_id  text UNIQUE NOT NULL,
-    payload         json NOT NULL,
-    status          text NOT NULL   -- PENDING | DONE
+    payload         jsonb NOT NULL,
+    status          text NOT NULL CHECK (status IN ('PENDING', 'DONE'))
 );
 ```
 
 ```js
+import { timingSafeEqual } from "node:crypto";
+
+const webhookToken = process.env.ASAAS_WEBHOOK_TOKEN;
+if (!webhookToken) throw new Error("Configure o token do webhook");
+const expectedToken = Buffer.from(webhookToken);
+
 app.post("/asaas/webhooks", express.json(), async (req, res) => {
+  const receivedToken = Buffer.from(req.get("asaas-access-token") || "");
+  if (receivedToken.length !== expectedToken.length ||
+      !timingSafeEqual(receivedToken, expectedToken)) {
+    return res.sendStatus(401);
+  }
+  if (typeof req.body?.id !== "string" || !req.body.id.trim() ||
+      typeof req.body?.event !== "string" || !req.body.event.trim()) {
+    return res.sendStatus(400);
+  }
   try {
     await db.query(
-      "INSERT INTO asaas_events (asaas_event_id, payload, status) VALUES ($1, $2, 'PENDING')",
+      `INSERT INTO asaas_events (asaas_event_id, payload, status)
+       VALUES ($1, $2, 'PENDING')
+       ON CONFLICT (asaas_event_id) DO NOTHING`,
       [req.body.id, req.body],
     );
-  } catch (e) {
-    if (e.code === "23505") return res.json({ received: true }); // duplicata: já registrado
-    throw e;
+    return res.status(200).json({ received: true });
+  } catch {
+    return res.sendStatus(503); // sem confirmação: permite nova tentativa
   }
-  return res.json({ received: true });
 });
 ```
 
-## O erro caro: responder 200 antes de persistir
+A restrição `UNIQUE` com `ON CONFLICT` cobre entregas concorrentes. Uma consulta de existência seguida de inserção separada não oferece essa proteção. Se usar transação explícita, confirme o `COMMIT` antes do `200`; falhas de persistência não devem ser confirmadas como sucesso. Adapte a validação dos recursos do payload aos eventos assinados antes de aplicar regras de negócio.
 
-Responder `200` e só então gravar significa que uma falha entre as duas coisas perde o evento em definitivo — o Asaas já considerou entregue e **não garante reenvio automático**.
+O `catch` retorna `503` para qualquer falha do `INSERT`, inclusive persistente. Gere alertas para essas falhas: retentativas sozinhas não corrigem dados incompatíveis ou erros de armazenamento e podem [interromper a fila no Asaas](https://docs.asaas.com/docs/fila-pausada). Corrija a causa, valide a persistência do evento que falhou e, se necessário, [reative a fila](https://docs.asaas.com/docs/como-reativar-fila-interrompida) pelo painel ou pela API; acompanhe a retomada dos eventos pendentes.
 
-A ordem importa: persiste, confirma, aí responde.
+O exemplo não inclui quarentena. Se precisar aceitar payloads autenticados que `jsonb` não consegue representar, preserve o conteúdo original e seu identificador em armazenamento durável compatível, com deduplicação, alerta e caminho de reprocessamento, antes de responder `200`. Sem persistência confirmada, mantenha a resposta de falha; nunca descarte o evento apenas para desbloquear a fila.
 
-## Por que processar assíncrono
+## Processamento e recuperação
 
-Processar a regra de negócio dentro do request tem dois problemas: o tempo de resposta cresce e aumenta a chance de o Asaas considerar a entrega falha (gerando reenvio), e uma exceção no meio do processamento pode devolver erro para um evento que já foi parcialmente aplicado.
+Este exemplo cobre a entrada durável, não a execução da regra de negócio. Um worker precisa reivindicar cada evento atomicamente para impedir dois consumidores simultâneos e recuperar tentativas interrompidas. Para efeitos no mesmo banco, aplique a mudança de negócio e `DONE` na mesma transação, com bloqueio do registro. Uma falha deve reverter ambos para permitir retry.
 
-Persistir e processar em worker separa as duas preocupações. Para volume alto (centenas de milhares de eventos/dia), uma fila dedicada — SQS, RabbitMQ, Kafka — em vez de tabela.
+Chamadas externas não participam dessa transação. Use uma outbox gravada junto da mudança local e envio com chave de idempotência quando o destino a suportar; preveja reconciliação se não suportar. Outbox sozinha não garante execução única no destino. Se publicar em broker, preserve a transição durável entre banco e fila para não perder eventos entre duas gravações.
+
+Valide duplicatas simultâneas, token inválido, falha de persistência e retomada após falha do worker. O recebimento duplicado não deve repetir efeitos de negócio. Monitore pendências e retries: após o `200`, a recuperação passa a ser responsabilidade da aplicação.
 
 ## Ordem
 
-A entrega não garante ordem. Se a sequência importa para o seu domínio, processe a fila em ordem ascendente de recebimento e trate o caso de um evento posterior chegar antes do anterior.
+O `sendType` **`SEQUENTIALLY` preserva a ordem de entrega**; `NON_SEQUENTIALLY` permite entregas paralelas sem garantia de ordem. Se o domínio depender da sequência, preserve-a também no processamento interno: workers paralelos podem concluir fora de ordem mesmo com entrega sequencial. Ordenar apenas pela chegada não reconstrói a sequência de origem no modo não sequencial.
 
-## Alternativa mais simples
-
-Se o volume é baixo e o processamento é rápido, dá para processar dentro do request e apenas registrar os `id`s já processados numa tabela de controle — consultando antes de processar. É menos robusto (o processamento continua preso ao timeout do request), mas resolve a duplicidade.
+Fontes: [introdução aos webhooks](https://docs.asaas.com/docs/sobre-os-webhooks), [idempotência](https://docs.asaas.com/docs/como-implementar-idempotencia-em-webhooks) e [criação e tipos de envio](https://docs.asaas.com/reference/criar-novo-webhook). As recomendações de transação e outbox descrevem responsabilidades da aplicação, não garantias adicionais do Asaas.
 
 ## Operação
 
 - Webhook é configurado **por conta**. Em cenários com subcontas, cada subconta precisa da sua própria configuração — configurar só na raiz não faz as subcontas notificarem.
-- Tokens de webhook têm validação de complexidade e geração automática obrigatória em versões recentes; confira o changelog da doc.
+- Configure e armazene o `authToken` do webhook com segurança. A referência descreve geração automática quando omitido, com retorno apenas na criação; confirme o contrato vigente antes de provisionar e nunca registre esse segredo em logs.
 - Filas com muitas falhas consecutivas podem ser penalizadas ou pausadas. Monitore e saiba reativar: `docs/fila-pausada.md`, `docs/penalização-de-filas.md`, `docs/como-reativar-fila-interrompida.md`.
 - O Asaas publica a lista de IPs oficiais, útil para allowlist: `docs/ips-oficiais-do-asaas.md`.
 - Configure alerta para ausência de eventos esperados. Silêncio em fluxo de pagamento raramente significa que está tudo bem.

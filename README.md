@@ -46,11 +46,13 @@ asaas/
     └── webhooks.md
 ```
 
-O `SKILL.md` carrega o essencial; as referências são lidas sob demanda conforme o tema da tarefa.
+A skill não depende de caminhos pessoais, conta específica ou MCP. O mesmo conteúdo pode ser usado no Codex, Claude Code e outros agentes compatíveis. O `SKILL.md` carrega o essencial; as referências são lidas sob demanda conforme o tema da tarefa.
 
 ## MCP oficial do Asaas
 
 O Asaas mantém um servidor MCP público com a especificação da API. É complementar a esta skill — ele responde sobre parâmetros e endpoints, a skill cobre decisões e armadilhas.
+
+O comando abaixo é específico do **Claude Code**. No Codex ou em outro cliente, configure a URL conforme as instruções de MCP desse cliente. A consulta direta à documentação continua disponível sem MCP.
 
 ```bash
 claude mcp add --scope user --transport http asaas-docs https://docs.asaas.com/mcp
